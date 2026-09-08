@@ -12,12 +12,14 @@ const KINDS: { key: Kind; label: string }[] = [
 function Field({
   label,
   children,
+  className = "",
 }: {
   label: string;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <label className="flex min-w-0 flex-1 flex-col gap-1">
+    <label className={`flex min-w-0 flex-col gap-1 ${className}`}>
       <span className="text-[11px] font-medium text-zinc-400">{label}</span>
       {children}
     </label>
@@ -137,7 +139,7 @@ export default function TodoForm({
               className={`w-full ${FIELD_CLASS}`}
             />
           </Field>
-          <div className="flex gap-2">
+          <div className="grid grid-cols-2 gap-2">
             <Field label="시작 시간">
               <input
                 type="time"
@@ -157,7 +159,7 @@ export default function TodoForm({
           </div>
         </>
       ) : (
-        <div className="flex gap-2">
+        <div className="grid grid-cols-2 gap-2">
           <Field label="마감일">
             <input
               type="date"
@@ -178,7 +180,7 @@ export default function TodoForm({
       )}
 
       <div className="flex items-end gap-2">
-        <Field label="우선순위">
+        <Field label="우선순위" className="flex-1">
           <select
             value={value.priority}
             onChange={(e) => set("priority", e.target.value as Priority)}

@@ -24,3 +24,34 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/*
+ * iOS Safari renders date and time inputs as native controls sized to their
+ * own content, ignoring the width the layout gives them. Side by side that
+ * leaves 마감일 and 마감시간 (and 시작/종료 시간) at different widths and
+ * heights, with the value pushed around inside the box. Strip the native
+ * appearance so they fill their grid column like any other field.
+ */
+input[type="date"],
+input[type="time"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  /* Matches the px-3 py-2 text-sm of the other fields, which iOS otherwise
+     collapses to the height of the native control. */
+  min-height: 2.375rem;
+}
+
+input[type="date"]::-webkit-date-and-time-value,
+input[type="time"]::-webkit-date-and-time-value {
+  text-align: left;
+}
+
+/* An empty date/time field shows nothing at all on iOS, so it reads as a
+   broken box. Dim the placeholder text the same way the other fields do. */
+input[type="date"]::-webkit-datetime-edit,
+input[type="time"]::-webkit-datetime-edit {
+  padding: 0;
+}
+
