@@ -27,3 +27,14 @@ export function daysBetween(from: string, to: string): number {
   };
   return Math.round((toMs(to) - toMs(from)) / 86_400_000);
 }
+
+/** HH:MM for the current moment in KST. */
+export function nowTimeStr(): string {
+  // en-GB formats as 24-hour HH:MM
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date());
+}

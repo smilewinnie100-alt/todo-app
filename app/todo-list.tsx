@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { addTodo, deleteTodo, logout, toggleTodo } from "./actions";
+import { useEffect, useState, useTransition } from "react";
+import { addTodo, deleteTodo, logout, toggleTodo, updateTodo } from "./actions";
+import CoworkerPanel from "./coworker-panel";
 import DateBanner from "./date-banner";
-import { todayStr } from "@/lib/date";
+import NotificationBell from "./notification-bell";
+import TodoForm, { emptyInput, inputFromTodo } from "./todo-form";
+import { nowTimeStr, todayStr } from "@/lib/date";
 import { getUpcomingHolidays } from "@/lib/holidays";
-import { FIELD_CLASS } from "@/lib/ui";
-import type { Priority, Todo } from "./types";
+import type { AppNotification, Person, Priority, Todo } from "./types";
 
 const PRIORITY_ORDER: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
 
@@ -31,29 +33,51 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "all", label: "전체" },
 ];
 
+/** Events are anchored by their start; tasks by their deadline. */
+function startsAt(todo: Todo): string {
+  return todo.kind === "event" ? todo.startTime : todo.endTime;
+}
+
+/** Sortable "when", with undated items pushed behind dated ones. */
+function whenKey(todo: Todo): string {
+  if (!todo.dueDate) return "";
+  return `${todo.dueDate} ${startsAt(todo) || "99:99"}`;
+}
+
+function whenLabel(todo: Todo): string {
+  if (!todo.dueDate) return "";
+  if (todo.kind === "event") {
+    return `${todo.dueDate} ${todo.startTime}–${todo.endTime}`;
+  }
+  return todo.endTime
+    ? `${todo.dueDate} ${todo.endTime}까지`
+    : `${todo.dueDate}까지`;
+}
+
 export default function TodoList({
   todos,
+  coworkers,
+  notifications,
   userName,
 }: {
   todos: Todo[];
+  coworkers: Person[];
+  notifications: AppNotification[];
   userName: string;
 }) {
-  const [input, setInput] = useState("");
-  const [dueDate, setDueDate] = useState("");
-  const [priority, setPriority] = useState<Priority>("medium");
   const [tab, setTab] = useState<Tab>("active");
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  function handleAdd() {
-    const text = input.trim();
-    if (!text) return;
-    startTransition(async () => {
-      await addTodo(text, dueDate, priority);
-      setInput("");
-      setDueDate("");
-      setPriority("medium");
-    });
-  }
+  // Resolved after mount only: the server render and the first client render
+  // have to agree, and "now" would differ between them.
+  const [nowTime, setNowTime] = useState("");
+  useEffect(() => {
+    const tick = () => setNowTime(nowTimeStr());
+    tick();
+    const timer = setInterval(tick, 60_000);
+    return () => clearInterval(timer);
+  }, []);
 
   const remaining = todos.filter((t) => !t.done).length;
   const doneCount = todos.length - remaining;
@@ -65,9 +89,11 @@ export default function TodoList({
     if (PRIORITY_ORDER[a.priority] !== PRIORITY_ORDER[b.priority]) {
       return PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority];
     }
-    if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate);
-    if (a.dueDate) return -1;
-    if (b.dueDate) return 1;
+    const keyA = whenKey(a);
+    const keyB = whenKey(b);
+    if (keyA && keyB) return keyA.localeCompare(keyB);
+    if (keyA) return -1;
+    if (keyB) return 1;
     return 0;
   });
 
@@ -85,7 +111,8 @@ export default function TodoList({
             할 일 목록
           </h1>
           <div className="flex shrink-0 items-baseline gap-2">
-            <span className="max-w-28 truncate text-xs text-zinc-400">
+            <NotificationBell notifications={notifications} />
+            <span className="max-w-24 truncate text-xs text-zinc-400">
               {userName}
             </span>
             <button
@@ -99,40 +126,19 @@ export default function TodoList({
 
         <DateBanner today={today} holidays={holidays} />
 
-        <div className="mb-4 flex flex-col gap-2">
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleAdd();
+        <div className="mb-4">
+          <TodoForm
+            initial={emptyInput()}
+            coworkers={coworkers}
+            canShare
+            submitLabel="추가"
+            pending={isPending}
+            resetOnSuccess
+            onSubmit={async (input) => {
+              const result = await addTodo(input);
+              return result.error ?? null;
             }}
-            placeholder="할 일을 입력하세요"
-            className={FIELD_CLASS}
           />
-          <div className="flex gap-2">
-            <input
-              type="date"
-              value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
-              className={`flex-1 ${FIELD_CLASS}`}
-            />
-            <select
-              value={priority}
-              onChange={(e) => setPriority(e.target.value as Priority)}
-              className={FIELD_CLASS}
-            >
-              <option value="high">높음</option>
-              <option value="medium">보통</option>
-              <option value="low">낮음</option>
-            </select>
-            <button
-              onClick={handleAdd}
-              disabled={isPending}
-              className="shrink-0 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
-            >
-              추가
-            </button>
-          </div>
         </div>
 
         <div className="mb-3 flex gap-1 border-b border-zinc-100 dark:border-zinc-800">
@@ -171,8 +177,40 @@ export default function TodoList({
         ) : (
           <ul className="flex flex-col gap-1">
             {visibleTodos.map((todo) => {
+              if (editingId === todo.id) {
+                return (
+                  <li
+                    key={todo.id}
+                    className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/60"
+                  >
+                    <TodoForm
+                      initial={inputFromTodo(todo)}
+                      coworkers={coworkers}
+                      canShare={todo.isOwner}
+                      submitLabel="저장"
+                      pending={isPending}
+                      onCancel={() => setEditingId(null)}
+                      onSubmit={async (input) => {
+                        const result = await updateTodo(todo.id, input);
+                        if (result.error) return result.error;
+                        setEditingId(null);
+                        return null;
+                      }}
+                    />
+                  </li>
+                );
+              }
+
+              const deadline = todo.endTime;
               const overdue =
-                !todo.done && !!todo.dueDate && todo.dueDate < today;
+                !todo.done &&
+                !!todo.dueDate &&
+                (todo.dueDate < today ||
+                  (todo.dueDate === today &&
+                    !!deadline &&
+                    !!nowTime &&
+                    deadline < nowTime));
+
               return (
                 <li
                   key={todo.id}
@@ -181,12 +219,10 @@ export default function TodoList({
                   <input
                     type="checkbox"
                     checked={todo.done}
-                    onChange={() =>
-                      startTransition(() => toggleTodo(todo.id))
-                    }
+                    onChange={() => startTransition(() => toggleTodo(todo.id))}
                     className="mt-1 h-4 w-4 shrink-0 accent-zinc-900 dark:accent-zinc-50"
                   />
-                  <div className="flex-1">
+                  <div className="min-w-0 flex-1">
                     <span
                       className={`break-words text-sm ${
                         todo.done
@@ -197,6 +233,11 @@ export default function TodoList({
                       {todo.text}
                     </span>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      {todo.kind === "event" && (
+                        <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[11px] font-medium text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-400">
+                          일정
+                        </span>
+                      )}
                       <span
                         className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${PRIORITY_STYLE[todo.priority]}`}
                       >
@@ -210,19 +251,45 @@ export default function TodoList({
                               : "text-zinc-400"
                           }`}
                         >
-                          {todo.dueDate}
+                          {whenLabel(todo)}
                           {overdue ? " 지남" : ""}
+                        </span>
+                      )}
+                      {!todo.isOwner && (
+                        <span className="text-[11px] text-zinc-400">
+                          {todo.ownerName} 님이 공유
+                        </span>
+                      )}
+                      {todo.isOwner && todo.sharedWith.length > 0 && (
+                        <span
+                          className="text-[11px] text-zinc-400"
+                          title={todo.sharedWith
+                            .map((person) => person.email)
+                            .join(", ")}
+                        >
+                          공유 중 ·{" "}
+                          {todo.sharedWith
+                            .map((person) => person.name)
+                            .join(", ")}
                         </span>
                       )}
                     </div>
                   </div>
-                  <button
-                    onClick={() => startTransition(() => deleteTodo(todo.id))}
-                    aria-label="삭제"
-                    className="shrink-0 rounded px-2 py-1 text-xs text-zinc-400 opacity-0 transition-opacity hover:text-red-500 group-hover:opacity-100"
-                  >
-                    삭제
-                  </button>
+                  <div className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                    <button
+                      onClick={() => setEditingId(todo.id)}
+                      className="rounded px-2 py-1 text-xs text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+                    >
+                      수정
+                    </button>
+                    <button
+                      onClick={() => startTransition(() => deleteTodo(todo.id))}
+                      aria-label="삭제"
+                      className="rounded px-2 py-1 text-xs text-zinc-400 hover:text-red-500"
+                    >
+                      삭제
+                    </button>
+                  </div>
                 </li>
               );
             })}
@@ -234,6 +301,8 @@ export default function TodoList({
             {remaining}개 남음 / 전체 {todos.length}개
           </p>
         )}
+
+        <CoworkerPanel coworkers={coworkers} />
       </main>
     </div>
   );
